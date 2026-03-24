@@ -24,7 +24,7 @@ description: 用于本仓库中的环境激活、命令执行、pytest 测试与
 ### 1. 环境激活
 
 - MUST: 在运行本仓库相关 Python 命令前，先尝试激活仓库规定的虚拟环境。
-- MUST: 尝试使用该命令激活虚拟环境： `& <Project>/.venv/Scripts/Activate.ps1`
+- MUST: 尝试使用以下命令激活虚拟环境： `& <Project>/.venv/Scripts/Activate.ps1`。
 - MUST: 若无法成功激活环境，必须明确告知用户。
 - SHOULD: 若一个路径失败，再尝试另一路径。
 - SHOULD: 仅在确认环境可用后再执行依赖该环境的 Python 命令。
