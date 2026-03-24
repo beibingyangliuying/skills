@@ -3,23 +3,47 @@ $ErrorActionPreference = "Stop"
 
 $script:RepositoryUrl = "https://github.com/beibingyangliuying/skills"
 $script:ArchiveUrl = "https://github.com/beibingyangliuying/skills/archive/refs/heads/main.zip"
+$script:DefaultAgent = "codex"
+$script:DefaultDownloadMethod = "auto"
+$script:DefaultConflictMode = "interactive"
+$script:AlwaysConfirmBeforeInstall = $true
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Get-UsageText {
     return @"
 Usage:
-  ./install-skills.ps1 --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
+  ./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
+  ./install-skills.ps1 list --region <name> [--download-method <auto|iwr|curl|bits|webclient>]
+  ./install-skills.ps1 --help
 
-Options:
+Subcommands:
+  install            Download a region from the repository and install its skills
+  list               Download a region from the repository and print its available skill names
+
+Compatibility:
+  - The legacy option-only syntax is no longer supported. Use 'install' or 'list' explicitly
+
+Install options:
   --region           Required. Install skills from a single region, for example: python
-  --include          Optional. Comma-separated skill names to include
-  --exclude          Optional. Comma-separated skill names to exclude
-  --agent            Optional. codex (default), claude, or a custom agent root path
-  --download-method  Optional. auto (default), iwr, curl, bits, or webclient
+  --include          Optional. Comma-separated skill names to include. If omitted, install all skills in the region
+  --exclude          Optional. Comma-separated skill names to exclude after include filtering
+  --agent            Optional. $($script:DefaultAgent) (default), claude, or a custom agent root path
+  --download-method  Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
   --overwrite-all    Optional. Overwrite all existing skills and AGENTS.md without prompting
   --skip-existing    Optional. Skip all existing skills and AGENTS.md without prompting
   --help             Show this help text
+
+List options:
+  --region           Required. List skills from a single region, for example: python
+  --download-method  Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
+  --help             Show this help text
+
+Defaults:
+  - Existing skills and AGENTS.md use per-item interactive confirmation unless --overwrite-all or --skip-existing is passed
+  - In interactive conflict prompts, pressing Enter defaults to Skip
+  - The script always shows the execution plan and asks for confirmation before writing files
+  - In the final confirmation prompt, pressing Enter defaults to Yes
 "@
 }
 
@@ -58,16 +82,54 @@ function Parse-Arguments {
         [string[]]$Tokens
     )
 
+    if ($Tokens.Count -eq 0) {
+        throw "A subcommand is required. Expected 'install' or 'list'.`n`n$(Get-UsageText)"
+    }
+
     $include = [System.Collections.Generic.List[string]]::new()
     $exclude = [System.Collections.Generic.List[string]]::new()
+    $command = $null
     $region = $null
-    $agent = "codex"
-    $downloadMethod = "auto"
+    $agent = $script:DefaultAgent
+    $downloadMethod = $script:DefaultDownloadMethod
     $overwriteAll = $false
     $skipExisting = $false
     $showHelp = $false
+    $supportedOptions = @()
 
-    for ($index = 0; $index -lt $Tokens.Count; $index++) {
+    $firstToken = $Tokens[0]
+    if ($firstToken -eq "--help" -or $firstToken -eq "-h") {
+        return [pscustomobject]@{
+            ShowHelp       = $true
+            Command        = $null
+            Region         = $null
+            Include        = @()
+            Exclude        = @()
+            Agent          = $agent
+            DownloadMethod = $downloadMethod
+            ConflictMode   = $script:DefaultConflictMode
+        }
+    }
+
+    if ($firstToken.StartsWith("--")) {
+        throw "A subcommand is required before options. Expected 'install' or 'list'.`n`n$(Get-UsageText)"
+    }
+
+    switch ($firstToken.ToLowerInvariant()) {
+        "install" {
+            $command = "install"
+            $supportedOptions = @("--region", "--include", "--exclude", "--agent", "--download-method")
+        }
+        "list" {
+            $command = "list"
+            $supportedOptions = @("--region", "--download-method")
+        }
+        default {
+            throw "Unknown subcommand: $firstToken`n`n$(Get-UsageText)"
+        }
+    }
+
+    for ($index = 1; $index -lt $Tokens.Count; $index++) {
         $token = $Tokens[$index]
 
         if ($token -eq "--help" -or $token -eq "-h") {
@@ -76,11 +138,19 @@ function Parse-Arguments {
         }
 
         if ($token -eq "--overwrite-all") {
+            if ($command -ne "install") {
+                throw "Option --overwrite-all is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
+            }
+
             $overwriteAll = $true
             continue
         }
 
         if ($token -eq "--skip-existing") {
+            if ($command -ne "install") {
+                throw "Option --skip-existing is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
+            }
+
             $skipExisting = $true
             continue
         }
@@ -88,13 +158,13 @@ function Parse-Arguments {
         $optionName = $null
         $optionValue = $null
 
-        if ($token -match "^(--region|--include|--exclude|--agent|--download-method)=(.+)$") {
+        if ($token -match "^(--[a-z-]+)=(.+)$") {
             $optionName = $Matches[1]
             $optionValue = $Matches[2]
         }
         else {
             $optionName = $token
-            if ($optionName -in @("--region", "--include", "--exclude", "--agent", "--download-method")) {
+            if ($optionName -in $supportedOptions) {
                 if ($index + 1 -ge $Tokens.Count) {
                     throw "Missing value for $optionName.`n`n$(Get-UsageText)"
                 }
@@ -102,6 +172,14 @@ function Parse-Arguments {
                 $index++
                 $optionValue = $Tokens[$index]
             }
+        }
+
+        if ($optionName -notin $supportedOptions) {
+            if ($command -eq "list" -and $optionName -in @("--include", "--exclude", "--agent")) {
+                throw "Option $optionName is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
+            }
+
+            throw "Unknown argument for '$command': $token`n`n$(Get-UsageText)"
         }
 
         switch ($optionName) {
@@ -133,33 +211,31 @@ function Parse-Arguments {
                     throw "Unsupported --download-method '$optionValue'. Expected one of: auto, iwr, curl, bits, webclient.`n`n$(Get-UsageText)"
                 }
             }
-            default {
-                throw "Unknown argument: $token`n`n$(Get-UsageText)"
-            }
         }
     }
 
     if ($showHelp) {
         return [pscustomobject]@{
             ShowHelp       = $true
+            Command        = $command
             Region         = $null
             Include        = @()
             Exclude        = @()
             Agent          = $agent
             DownloadMethod = $downloadMethod
-            ConflictMode   = "interactive"
+            ConflictMode   = $script:DefaultConflictMode
         }
     }
 
     if ([string]::IsNullOrWhiteSpace($region)) {
-        throw "--region is required.`n`n$(Get-UsageText)"
+        throw "--region is required for '$command'.`n`n$(Get-UsageText)"
     }
 
     if ($overwriteAll -and $skipExisting) {
         throw "--overwrite-all and --skip-existing cannot be used together.`n`n$(Get-UsageText)"
     }
 
-    $conflictMode = "interactive"
+    $conflictMode = $script:DefaultConflictMode
     if ($overwriteAll) {
         $conflictMode = "overwrite-all"
     }
@@ -169,6 +245,7 @@ function Parse-Arguments {
 
     return [pscustomobject]@{
         ShowHelp       = $false
+        Command        = $command
         Region         = $region
         Include        = $include.ToArray()
         Exclude        = $exclude.ToArray()
@@ -512,6 +589,24 @@ function Get-AvailableSkills {
     return $skills
 }
 
+function Show-SkillList {
+    param(
+        [string]$Region,
+        [object[]]$Skills
+    )
+
+    Write-Host ""
+    Write-Host "Available skills"
+    Write-Host "================"
+    Write-Host "Region : $Region"
+    Write-Host "Count  : $($Skills.Count)"
+    Write-Host ""
+    Write-Host "Skills:"
+    foreach ($skill in $Skills) {
+        Write-Host "  - $($skill.Name)"
+    }
+}
+
 function Resolve-SelectedSkills {
     param(
         [object[]]$AvailableSkills,
@@ -661,8 +756,16 @@ function Show-ExecutionPlan {
 }
 
 function Confirm-Execution {
+    if (-not $script:AlwaysConfirmBeforeInstall) {
+        return $true
+    }
+
     while ($true) {
-        $answer = Read-Host "Continue with installation? [Y/N]"
+        $answer = Read-Host "Continue with installation? [Y/n]"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            return $true
+        }
+
         switch ($answer.Trim().ToLowerInvariant()) {
             "y" { return $true }
             "yes" { return $true }
@@ -681,7 +784,11 @@ function Confirm-Replace {
     )
 
     while ($true) {
-        $answer = Read-Host "$ItemType '$Name' already exists at '$Path'. Choose [O]verwrite or [S]kip"
+        $answer = Read-Host "$ItemType '$Name' already exists at '$Path'. Choose [O/s]"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            return "Skip"
+        }
+
         switch ($answer.Trim().ToLowerInvariant()) {
             "o" { return "Overwrite" }
             "overwrite" { return "Overwrite" }
@@ -895,12 +1002,18 @@ try {
         exit 0
     }
 
-    $agentRoot = Resolve-AgentRoot -AgentValue $config.Agent
     $archive = Get-RepoArchive -ArchiveUrl $script:ArchiveUrl -DownloadMethod $config.DownloadMethod
     $workspaceRoot = $archive.WorkspaceRoot
 
     $layout = Get-RegionLayout -ArchiveRoot $archive.ArchiveRoot -Region $config.Region
     $availableSkills = Get-AvailableSkills -SkillsRoot $layout.SkillsRoot
+
+    if ($config.Command -eq "list") {
+        Show-SkillList -Region $config.Region -Skills $availableSkills
+        exit 0
+    }
+
+    $agentRoot = Resolve-AgentRoot -AgentValue $config.Agent
     $selection = Resolve-SelectedSkills -AvailableSkills $availableSkills -Include $config.Include -Exclude $config.Exclude
     $conflicts = Get-Conflicts -Skills $selection.Skills -AgentRoot $agentRoot
 
