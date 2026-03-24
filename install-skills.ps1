@@ -9,14 +9,17 @@ $script:ArchiveUrl = "https://github.com/beibingyangliuying/skills/archive/refs/
 function Get-UsageText {
     return @"
 Usage:
-  ./install-skills.ps1 --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>]
+  ./install-skills.ps1 --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
 
 Options:
-  --region   Required. Install skills from a single region, for example: python
-  --include  Optional. Comma-separated skill names to include
-  --exclude  Optional. Comma-separated skill names to exclude
-  --agent    Optional. codex (default), claude, or a custom agent root path
-  --help     Show this help text
+  --region           Required. Install skills from a single region, for example: python
+  --include          Optional. Comma-separated skill names to include
+  --exclude          Optional. Comma-separated skill names to exclude
+  --agent            Optional. codex (default), claude, or a custom agent root path
+  --download-method  Optional. auto (default), iwr, curl, bits, or webclient
+  --overwrite-all    Optional. Overwrite all existing skills and AGENTS.md without prompting
+  --skip-existing    Optional. Skip all existing skills and AGENTS.md without prompting
+  --help             Show this help text
 "@
 }
 
@@ -59,6 +62,9 @@ function Parse-Arguments {
     $exclude = [System.Collections.Generic.List[string]]::new()
     $region = $null
     $agent = "codex"
+    $downloadMethod = "auto"
+    $overwriteAll = $false
+    $skipExisting = $false
     $showHelp = $false
 
     for ($index = 0; $index -lt $Tokens.Count; $index++) {
@@ -69,16 +75,26 @@ function Parse-Arguments {
             continue
         }
 
+        if ($token -eq "--overwrite-all") {
+            $overwriteAll = $true
+            continue
+        }
+
+        if ($token -eq "--skip-existing") {
+            $skipExisting = $true
+            continue
+        }
+
         $optionName = $null
         $optionValue = $null
 
-        if ($token -match "^(--region|--include|--exclude|--agent)=(.+)$") {
+        if ($token -match "^(--region|--include|--exclude|--agent|--download-method)=(.+)$") {
             $optionName = $Matches[1]
             $optionValue = $Matches[2]
         }
         else {
             $optionName = $token
-            if ($optionName -in @("--region", "--include", "--exclude", "--agent")) {
+            if ($optionName -in @("--region", "--include", "--exclude", "--agent", "--download-method")) {
                 if ($index + 1 -ge $Tokens.Count) {
                     throw "Missing value for $optionName.`n`n$(Get-UsageText)"
                 }
@@ -111,6 +127,12 @@ function Parse-Arguments {
                     throw "--agent cannot be empty.`n`n$(Get-UsageText)"
                 }
             }
+            "--download-method" {
+                $downloadMethod = $optionValue.Trim().ToLowerInvariant()
+                if ($downloadMethod -notin @("auto", "iwr", "curl", "bits", "webclient")) {
+                    throw "Unsupported --download-method '$optionValue'. Expected one of: auto, iwr, curl, bits, webclient.`n`n$(Get-UsageText)"
+                }
+            }
             default {
                 throw "Unknown argument: $token`n`n$(Get-UsageText)"
             }
@@ -119,11 +141,13 @@ function Parse-Arguments {
 
     if ($showHelp) {
         return [pscustomobject]@{
-            ShowHelp = $true
-            Region   = $null
-            Include  = @()
-            Exclude  = @()
-            Agent    = $agent
+            ShowHelp       = $true
+            Region         = $null
+            Include        = @()
+            Exclude        = @()
+            Agent          = $agent
+            DownloadMethod = $downloadMethod
+            ConflictMode   = "interactive"
         }
     }
 
@@ -131,13 +155,252 @@ function Parse-Arguments {
         throw "--region is required.`n`n$(Get-UsageText)"
     }
 
-    return [pscustomobject]@{
-        ShowHelp = $false
-        Region   = $region
-        Include  = $include.ToArray()
-        Exclude  = $exclude.ToArray()
-        Agent    = $agent
+    if ($overwriteAll -and $skipExisting) {
+        throw "--overwrite-all and --skip-existing cannot be used together.`n`n$(Get-UsageText)"
     }
+
+    $conflictMode = "interactive"
+    if ($overwriteAll) {
+        $conflictMode = "overwrite-all"
+    }
+    elseif ($skipExisting) {
+        $conflictMode = "skip-existing"
+    }
+
+    return [pscustomobject]@{
+        ShowHelp       = $false
+        Region         = $region
+        Include        = $include.ToArray()
+        Exclude        = $exclude.ToArray()
+        Agent          = $agent
+        DownloadMethod = $downloadMethod
+        ConflictMode   = $conflictMode
+    }
+}
+
+function Get-InnerExceptionMessage {
+    param(
+        [AllowNull()]
+        [System.Exception]$Exception
+    )
+
+    if ($null -eq $Exception) {
+        return "Unknown error."
+    }
+
+    $current = $Exception
+    while ($null -ne $current.InnerException) {
+        $current = $current.InnerException
+    }
+
+    return $current.Message
+}
+
+function Get-PowerShellRuntimeLabel {
+    $edition = $PSVersionTable.PSEdition
+    if ([string]::IsNullOrWhiteSpace($edition)) {
+        $edition = "Desktop"
+    }
+
+    return "PowerShell $($PSVersionTable.PSVersion) ($edition)"
+}
+
+function Use-Tls12ForLegacyClients {
+    if ($PSVersionTable.PSVersion.Major -lt 6) {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
+}
+
+function Test-CommandAvailable {
+    param(
+        [string]$Name
+    )
+
+    return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Invoke-DownloadWithInvokeWebRequest {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    Use-Tls12ForLegacyClients
+
+    $parameters = @{
+        Uri     = $Url
+        OutFile = $OutFile
+    }
+
+    $command = Get-Command Invoke-WebRequest -ErrorAction Stop
+    if ($command.Parameters.ContainsKey("SslProtocol")) {
+        $parameters["SslProtocol"] = "Tls12"
+    }
+
+    Invoke-WebRequest @parameters | Out-Null
+}
+
+function Invoke-DownloadWithCurl {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    if (-not (Test-CommandAvailable -Name "curl.exe")) {
+        throw "curl.exe is not available on this system."
+    }
+
+    & curl.exe --fail --location --silent --show-error --output $OutFile $Url
+    if ($LASTEXITCODE -ne 0) {
+        throw "curl.exe failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Invoke-DownloadWithBits {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    if (-not (Test-CommandAvailable -Name "Start-BitsTransfer")) {
+        throw "Start-BitsTransfer is not available on this system."
+    }
+
+    Start-BitsTransfer -Source $Url -Destination $OutFile
+}
+
+function Invoke-DownloadWithWebClient {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    Use-Tls12ForLegacyClients
+
+    $client = New-Object System.Net.WebClient
+    try {
+        $client.DownloadFile($Url, $OutFile)
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Invoke-DownloadMethod {
+    param(
+        [string]$Method,
+        [string]$Url,
+        [string]$OutFile
+    )
+
+    switch ($Method) {
+        "iwr" { Invoke-DownloadWithInvokeWebRequest -Url $Url -OutFile $OutFile }
+        "curl" { Invoke-DownloadWithCurl -Url $Url -OutFile $OutFile }
+        "bits" { Invoke-DownloadWithBits -Url $Url -OutFile $OutFile }
+        "webclient" { Invoke-DownloadWithWebClient -Url $Url -OutFile $OutFile }
+        default { throw "Unsupported download method '$Method'." }
+    }
+}
+
+function Get-DownloadMethodSequence {
+    param(
+        [string]$RequestedMethod
+    )
+
+    if ($RequestedMethod -ne "auto") {
+        return @($RequestedMethod)
+    }
+
+    $methods = [System.Collections.Generic.List[string]]::new()
+    $null = $methods.Add("iwr")
+
+    if (Test-CommandAvailable -Name "curl.exe") {
+        $null = $methods.Add("curl")
+    }
+
+    if (Test-CommandAvailable -Name "Start-BitsTransfer") {
+        $null = $methods.Add("bits")
+    }
+
+    $null = $methods.Add("webclient")
+    return $methods.ToArray()
+}
+
+function New-DownloadFailureMessage {
+    param(
+        [string]$Url,
+        [string]$RequestedMethod,
+        [object[]]$Attempts
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $null = $lines.Add("Failed to download archive from '$Url'.")
+    $null = $lines.Add("Runtime: $(Get-PowerShellRuntimeLabel)")
+    $null = $lines.Add("Requested download method: $RequestedMethod")
+    $null = $lines.Add("Attempt summary:")
+
+    $sslHintNeeded = $false
+    foreach ($attempt in $Attempts) {
+        $null = $lines.Add("  - $($attempt.Method): $($attempt.Message)")
+        $inner = "$($attempt.InnerMessage)"
+        if ($inner -match "SSL|TLS|certificate|trust|secure channel|authentication|handshake") {
+            $sslHintNeeded = $true
+        }
+    }
+
+    if ($sslHintNeeded) {
+        $null = $lines.Add("Possible causes:")
+        $null = $lines.Add("  - The current PowerShell runtime and GitHub TLS negotiation do not agree.")
+        $null = $lines.Add("  - A proxy or HTTPS interception certificate is rewriting the connection.")
+        $null = $lines.Add("  - The local trust store does not trust the certificate chain.")
+        $null = $lines.Add("Troubleshooting tips:")
+        $null = $lines.Add("  - Try '--download-method curl' if curl.exe works on this machine.")
+        $null = $lines.Add("  - Compare the result in Windows PowerShell 5.1 versus PowerShell 7+.")
+        $null = $lines.Add("  - Test the URL manually: curl.exe -L $Url -o test.zip")
+        $null = $lines.Add("  - If you are on a corporate network, verify proxy and certificate requirements.")
+    }
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Download-Archive {
+    param(
+        [string]$Url,
+        [string]$OutFile,
+        [string]$RequestedMethod
+    )
+
+    $methods = Get-DownloadMethodSequence -RequestedMethod $RequestedMethod
+    $attempts = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($method in $methods) {
+        if (Test-Path -LiteralPath $OutFile) {
+            Remove-Item -LiteralPath $OutFile -Force
+        }
+
+        try {
+            Invoke-DownloadMethod -Method $method -Url $Url -OutFile $OutFile
+            if (-not (Test-Path -LiteralPath $OutFile -PathType Leaf)) {
+                throw "The downloader reported success, but '$OutFile' was not created."
+            }
+
+            return [pscustomobject]@{
+                Method = $method
+                Path   = $OutFile
+            }
+        }
+        catch {
+            $exceptionMessage = $_.Exception.Message
+            $innerMessage = Get-InnerExceptionMessage -Exception $_.Exception
+            $null = $attempts.Add([pscustomobject]@{
+                    Method       = $method
+                    Message      = $exceptionMessage
+                    InnerMessage = $innerMessage
+                })
+        }
+    }
+
+    throw (New-DownloadFailureMessage -Url $Url -RequestedMethod $RequestedMethod -Attempts $attempts.ToArray())
 }
 
 function Resolve-AgentRoot {
@@ -147,10 +410,10 @@ function Resolve-AgentRoot {
 
     switch ($AgentValue.ToLowerInvariant()) {
         "codex" {
-            return [System.IO.Path]::GetFullPath((Join-Path $HOME ".codex"))
+            return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".codex"))
         }
         "claude" {
-            return [System.IO.Path]::GetFullPath((Join-Path $HOME ".claude"))
+            return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".claude"))
         }
         default {
             return [System.IO.Path]::GetFullPath(
@@ -173,13 +436,14 @@ function New-TemporaryWorkspace {
 
 function Get-RepoArchive {
     param(
-        [string]$ArchiveUrl
+        [string]$ArchiveUrl,
+        [string]$DownloadMethod
     )
 
     $workspace = New-TemporaryWorkspace
     $null = New-Item -ItemType Directory -Path $workspace.ExtractPath -Force
 
-    Invoke-WebRequest -Uri $ArchiveUrl -OutFile $workspace.ArchivePath
+    $download = Download-Archive -Url $ArchiveUrl -OutFile $workspace.ArchivePath -RequestedMethod $DownloadMethod
     Expand-Archive -LiteralPath $workspace.ArchivePath -DestinationPath $workspace.ExtractPath -Force
 
     $archiveEntries = @(Get-ChildItem -LiteralPath $workspace.ExtractPath)
@@ -188,8 +452,9 @@ function Get-RepoArchive {
     }
 
     return [pscustomobject]@{
-        WorkspaceRoot = $workspace.RootPath
-        ArchiveRoot   = $archiveEntries[0].FullName
+        WorkspaceRoot  = $workspace.RootPath
+        ArchiveRoot    = $archiveEntries[0].FullName
+        DownloadMethod = $download.Method
     }
 }
 
@@ -331,7 +596,8 @@ function Show-ExecutionPlan {
         [string]$AgentRoot,
         [object[]]$Skills,
         [object[]]$Conflicts,
-        [string[]]$Notes
+        [string[]]$Notes,
+        [string]$ResolvedDownloadMethod
     )
 
     $skillsTargetRoot = Join-Path $AgentRoot "skills"
@@ -344,6 +610,8 @@ function Show-ExecutionPlan {
     Write-Host "=============="
     Write-Host "Repository : $script:RepositoryUrl"
     Write-Host "Archive     : $script:ArchiveUrl"
+    Write-Host "Download    : requested=$($Config.DownloadMethod), used=$ResolvedDownloadMethod"
+    Write-Host "Conflicts   : $($Config.ConflictMode)"
     Write-Host "Region      : $($Config.Region)"
     Write-Host "Agent root  : $AgentRoot"
     Write-Host "Skills dir  : $skillsTargetRoot"
@@ -424,6 +692,22 @@ function Confirm-Replace {
     }
 }
 
+function Resolve-ConflictAction {
+    param(
+        [string]$ConflictMode,
+        [string]$ItemType,
+        [string]$Name,
+        [string]$Path
+    )
+
+    switch ($ConflictMode) {
+        "overwrite-all" { return "Overwrite" }
+        "skip-existing" { return "Skip" }
+        "interactive" { return (Confirm-Replace -ItemType $ItemType -Name $Name -Path $Path) }
+        default { throw "Unsupported conflict mode '$ConflictMode'." }
+    }
+}
+
 function New-ExecutionResult {
     return [pscustomobject]@{
         InstalledSkills   = [System.Collections.Generic.List[string]]::new()
@@ -438,7 +722,8 @@ function Install-Skill {
     param(
         [pscustomobject]$Skill,
         [string]$SkillsTargetRoot,
-        [pscustomobject]$Result
+        [pscustomobject]$Result,
+        [string]$ConflictMode
     )
 
     $destination = Join-Path $SkillsTargetRoot $Skill.Name
@@ -446,7 +731,7 @@ function Install-Skill {
     try {
         $action = "Install"
         if (Test-Path -LiteralPath $destination) {
-            $action = Confirm-Replace -ItemType "Skill" -Name $Skill.Name -Path $destination
+            $action = Resolve-ConflictAction -ConflictMode $ConflictMode -ItemType "Skill" -Name $Skill.Name -Path $destination
         }
 
         if ($action -eq "Skip") {
@@ -473,13 +758,14 @@ function Install-AgentsFile {
     param(
         [string]$SourcePath,
         [string]$TargetPath,
-        [pscustomobject]$Result
+        [pscustomobject]$Result,
+        [string]$ConflictMode
     )
 
     try {
         $action = "Install"
         if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
-            $action = Confirm-Replace -ItemType "File" -Name "AGENTS.md" -Path $TargetPath
+            $action = Resolve-ConflictAction -ConflictMode $ConflictMode -ItemType "File" -Name "AGENTS.md" -Path $TargetPath
         }
 
         if ($action -eq "Skip") {
@@ -504,13 +790,17 @@ function Install-AgentsFile {
 function Write-ExecutionSummary {
     param(
         [pscustomobject]$Result,
-        [string]$AgentRoot
+        [string]$AgentRoot,
+        [string]$DownloadMethodUsed,
+        [string]$ConflictMode
     )
 
     Write-Host ""
     Write-Host "Execution summary"
     Write-Host "================="
     Write-Host "Agent root : $AgentRoot"
+    Write-Host "Download   : $DownloadMethodUsed"
+    Write-Host "Conflicts  : $ConflictMode"
     Write-Host "Skills dir : $(Join-Path $AgentRoot 'skills')"
     Write-Host "AGENTS.md  : $(Join-Path $AgentRoot 'AGENTS.md')"
     Write-Host ""
@@ -567,7 +857,8 @@ function Invoke-Installation {
     param(
         [object[]]$Skills,
         [string]$AgentsSourcePath,
-        [string]$AgentRoot
+        [string]$AgentRoot,
+        [string]$ConflictMode
     )
 
     $result = New-ExecutionResult
@@ -577,10 +868,10 @@ function Invoke-Installation {
     $null = New-Item -ItemType Directory -Path $skillsTargetRoot -Force
 
     foreach ($skill in $Skills) {
-        Install-Skill -Skill $skill -SkillsTargetRoot $skillsTargetRoot -Result $result
+        Install-Skill -Skill $skill -SkillsTargetRoot $skillsTargetRoot -Result $result -ConflictMode $ConflictMode
     }
 
-    Install-AgentsFile -SourcePath $AgentsSourcePath -TargetPath (Join-Path $AgentRoot "AGENTS.md") -Result $result
+    Install-AgentsFile -SourcePath $AgentsSourcePath -TargetPath (Join-Path $AgentRoot "AGENTS.md") -Result $result -ConflictMode $ConflictMode
     return $result
 }
 
@@ -605,7 +896,7 @@ try {
     }
 
     $agentRoot = Resolve-AgentRoot -AgentValue $config.Agent
-    $archive = Get-RepoArchive -ArchiveUrl $script:ArchiveUrl
+    $archive = Get-RepoArchive -ArchiveUrl $script:ArchiveUrl -DownloadMethod $config.DownloadMethod
     $workspaceRoot = $archive.WorkspaceRoot
 
     $layout = Get-RegionLayout -ArchiveRoot $archive.ArchiveRoot -Region $config.Region
@@ -613,7 +904,7 @@ try {
     $selection = Resolve-SelectedSkills -AvailableSkills $availableSkills -Include $config.Include -Exclude $config.Exclude
     $conflicts = Get-Conflicts -Skills $selection.Skills -AgentRoot $agentRoot
 
-    Show-ExecutionPlan -Config $config -AgentRoot $agentRoot -Skills $selection.Skills -Conflicts $conflicts -Notes $selection.Notes
+    Show-ExecutionPlan -Config $config -AgentRoot $agentRoot -Skills $selection.Skills -Conflicts $conflicts -Notes $selection.Notes -ResolvedDownloadMethod $archive.DownloadMethod
 
     if (-not (Confirm-Execution)) {
         Write-Host ""
@@ -621,8 +912,8 @@ try {
         exit 0
     }
 
-    $result = Invoke-Installation -Skills $selection.Skills -AgentsSourcePath $layout.AgentsPath -AgentRoot $agentRoot
-    Write-ExecutionSummary -Result $result -AgentRoot $agentRoot
+    $result = Invoke-Installation -Skills $selection.Skills -AgentsSourcePath $layout.AgentsPath -AgentRoot $agentRoot -ConflictMode $config.ConflictMode
+    Write-ExecutionSummary -Result $result -AgentRoot $agentRoot -DownloadMethodUsed $archive.DownloadMethod -ConflictMode $config.ConflictMode
 
     if ($result.FailedItems.Count -gt 0) {
         exit 1
