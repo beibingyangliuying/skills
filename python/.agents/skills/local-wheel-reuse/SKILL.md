@@ -1,8 +1,12 @@
 ---
 name: local-wheel-reuse
-description: 用于本仓库中的 Python 编码、重构、实现排查、依赖选型与复用判断任务。当当前项目根目录存在本地 .whl 文件时，优先检查同名 wheel 的最新版以寻找可复用方案；当新写代码明显属于某个本地包的能力域时，优先在项目根目录创建 `<本地包>_local` 过渡包承接实现，方便后续升级本地包并迁移调用方。
+description: 仅在用户显式要求使用 `local-wheel-reuse` 时启用。启用后，在开始设计方案、搜索实现或编写代码前，先检查当前项目根目录下是否存在本地 `.whl` 文件，并优先评估最新版 wheel 复用或 `<本地包>_local` 过渡方案。
 ---
 # Local Wheel Reuse
+
+## 何时使用
+
+仅当用户显式使用或点名 `local-wheel-reuse` 时使用本 skill。
 
 ## 核心目标
 
