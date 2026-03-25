@@ -9,39 +9,49 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 - 安装到指定项目根目录下的 `.agents` 目录
 - 列出该 region 下可用的 skill 名称
 
-当前脚本采用子命令形式，支持单个 region 的 `install` 和 `list` 操作；默认安装目标是脚本所在目录下的 `\.agents`。
+当前脚本采用 PowerShell 原生参数风格，支持单个 region 的 `install` 和 `list` 操作；默认安装目标是脚本所在目录下的 `\.agents`。
+
+脚本现在支持 PowerShell Tab 补全，能够补全：
+
+- 子命令：`install`、`list`
+- 参数名：`-Region`、`-Include`、`-Exclude`、`-RootPath`、`-DownloadMethod`、`-OverwriteAll`、`-SkipExisting`、`-Help`
+- 固定枚举值：`-DownloadMethod`
+- 本地仓库中的 region 名称
+- 已选 region 下的 skill 名称，用于 `-Include` 和 `-Exclude`
 
 ### 用法
 
 ```powershell
-./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--root-path <path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
-./install-skills.ps1 list --region <name> [--download-method <auto|iwr|curl|bits|webclient>]
+./install-skills.ps1 install -Region <name> [-Include <skill1,skill2>] [-Exclude <skill1,skill2>] [-RootPath <path>] [-DownloadMethod <auto|iwr|curl|bits|webclient>] [-OverwriteAll] [-SkipExisting]
+./install-skills.ps1 list -Region <name> [-DownloadMethod <auto|iwr|curl|bits|webclient>]
+./install-skills.ps1 -Help
 ```
 
 参数说明：
 
 - `install`：安装指定 region 下的 skills 到项目根目录下的 `.agents` 目录
 - `list`：列出指定 region 下远端仓库中的可用 skill 名称
-- `--region`：必填。指定要处理的 region，例如 `python`
-- `--include`：仅 `install` 支持。只安装列出的 skill，多个名称用英文逗号分隔
-- `--exclude`：仅 `install` 支持。排除列出的 skill，多个名称用英文逗号分隔
-- `--root-path`：仅 `install` 支持。表示项目根目录；实际会安装到该目录下的 `.agents`
-- `--download-method`：`install` 和 `list` 都支持。默认 `auto`；用于排障时强制指定下载器，可选 `iwr`、`curl`、`bits`、`webclient`
-- `--overwrite-all`：仅 `install` 支持。目标已存在时全部直接覆盖，不再逐项询问
-- `--skip-existing`：仅 `install` 支持。目标已存在时全部直接跳过，不再逐项询问
+- `-Region`：必填。指定要处理的 region，例如 `python`
+- `-Include`：仅 `install` 支持。只安装列出的 skill，使用 PowerShell 数组语法，例如 `-Include pandas-dataframe,repo-workflow`
+- `-Exclude`：仅 `install` 支持。排除列出的 skill，使用 PowerShell 数组语法
+- `-RootPath`：仅 `install` 支持。表示项目根目录；实际会安装到该目录下的 `.agents`
+- `-DownloadMethod`：`install` 和 `list` 都支持。默认 `auto`；用于排障时强制指定下载器，可选 `iwr`、`curl`、`bits`、`webclient`
+- `-OverwriteAll`：仅 `install` 支持。目标已存在时全部直接覆盖，不再逐项询问
+- `-SkipExisting`：仅 `install` 支持。目标已存在时全部直接跳过，不再逐项询问
+- `-Help`：显示帮助文本；也可以配合 `Get-Help .\install-skills.ps1`
 
-`install` 子命令中，`--overwrite-all` 和 `--skip-existing` 不能同时传入；两者都不传时，默认是交互式逐项确认。
+`install` 子命令中，`-OverwriteAll` 和 `-SkipExisting` 不能同时传入；两者都不传时，默认是交互式逐项确认。
 
-`install` 如果不传 `--include` 和 `--exclude`，默认安装该 region 下的全部 skills。脚本在真正写入前总会先展示 execution plan，并要求用户再确认一次；该确认直接回车时默认按 `Y` 继续。
+`install` 如果不传 `-Include` 和 `-Exclude`，默认安装该 region 下的全部 skills。脚本在真正写入前总会先展示 execution plan，并要求用户再确认一次；该确认直接回车时默认按 `Y` 继续。
 
 `list` 是只读操作，会从远端仓库读取该 region 下的 skill 列表，输出 region 名称、skill 数量和逐行 skill 名称，不会执行任何本地写入。
 
-旧写法 `./install-skills.ps1 --region python` 已不再支持，必须显式使用 `install` 或 `list` 子命令。
+旧写法 `./install-skills.ps1 install --region python` 已不再支持，必须改为 PowerShell 原生参数写法，例如 `./install-skills.ps1 install -Region python`。
 
 ### 目录规则
 
-- 如果不传 `--root-path`，项目根目录默认是 `<scriptRoot>`
-- 如果传入 `--root-path <path>`，则项目根目录是 `<path>`
+- 如果不传 `-RootPath`，项目根目录默认是 `<scriptRoot>`
+- 如果传入 `-RootPath <path>`，则项目根目录是 `<path>`
 - skills 会安装到 `<projectRoot>\.agents\skills\<skillName>`
 - `AGENTS.md` 会安装到 `<projectRoot>\.agents\AGENTS.md`
 
@@ -52,55 +62,55 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 安装 `python` region 下的全部 skills 到默认的 `.agents` 目录：
 
 ```powershell
-./install-skills.ps1 install --region python
+./install-skills.ps1 install -Region python
 ```
 
 只安装指定的两个 skills：
 
 ```powershell
-./install-skills.ps1 install --region python --include pandas-dataframe,repo-workflow
+./install-skills.ps1 install -Region python -Include pandas-dataframe,repo-workflow
 ```
 
 安装除某个 skill 之外的全部内容：
 
 ```powershell
-./install-skills.ps1 install --region python --exclude local-wheel-reuse
+./install-skills.ps1 install -Region python -Exclude local-wheel-reuse
 ```
 
 安装到自定义项目根目录：
 
 ```powershell
-./install-skills.ps1 install --region python --root-path C:\work\demo
+./install-skills.ps1 install -Region python -RootPath C:\work\demo
 ```
 
 目标已存在时全部覆盖：
 
 ```powershell
-./install-skills.ps1 install --region python --overwrite-all
+./install-skills.ps1 install -Region python -OverwriteAll
 ```
 
 目标已存在时全部跳过：
 
 ```powershell
-./install-skills.ps1 install --region python --skip-existing
+./install-skills.ps1 install -Region python -SkipExisting
 ```
 
 如果默认下载器在你的环境里握手失败，可以强制改用 `curl.exe`：
 
 ```powershell
-./install-skills.ps1 install --region python --download-method curl
+./install-skills.ps1 install -Region python -DownloadMethod curl
 ```
 
 列出 `python` region 下远端仓库中的全部 skills：
 
 ```powershell
-./install-skills.ps1 list --region python
+./install-skills.ps1 list -Region python
 ```
 
 列 skill 列表时强制改用 `curl.exe`：
 
 ```powershell
-./install-skills.ps1 list --region python --download-method curl
+./install-skills.ps1 list -Region python -DownloadMethod curl
 ```
 
 ### 执行前确认与执行后概要
@@ -138,9 +148,9 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 
 如果目标 `.agents` 根目录已经存在 `AGENTS.md`，同样会提示覆盖还是跳过。
 
-如果传了 `--overwrite-all`，所有已存在项都会直接覆盖。
+如果传了 `-OverwriteAll`，所有已存在项都会直接覆盖。
 
-如果传了 `--skip-existing`，所有已存在项都会直接跳过。
+如果传了 `-SkipExisting`，所有已存在项都会直接跳过。
 
 默认不会静默覆盖或静默跳过现有内容。
 
@@ -177,7 +187,7 @@ curl.exe -L https://github.com/beibingyangliuying/skills/archive/refs/heads/main
 1. 如果 `curl.exe` 可以，而默认运行失败，改用：
 
 ```powershell
-./install-skills.ps1 install --region python --download-method curl
+./install-skills.ps1 install -Region python -DownloadMethod curl
 ```
 
 1. 对比当前运行的是 `Windows PowerShell 5.1` 还是 `PowerShell 7+`：

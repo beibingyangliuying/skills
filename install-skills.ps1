@@ -1,3 +1,275 @@
+<#
+.SYNOPSIS
+Downloads and installs skills from a selected region into a project's .agents directory.
+
+.DESCRIPTION
+Supports two subcommands:
+- install: download a region and install selected skills plus AGENTS.md
+- list: download a region and print the available skill names
+
+The script uses native PowerShell parameters and supports tab completion for:
+- the command name
+- region names from the local repository layout
+- skill names for -Include and -Exclude after -Region is chosen
+- download methods
+
+.PARAMETER Command
+The subcommand to run. Use either 'install' or 'list'.
+
+.PARAMETER Region
+The region to download and inspect, for example 'python'.
+
+.PARAMETER Include
+Only for 'install'. One or more skill names to include. PowerShell array syntax is supported, for example:
+-Include pandas-dataframe,repo-workflow
+
+.PARAMETER Exclude
+Only for 'install'. One or more skill names to exclude after include filtering.
+
+.PARAMETER RootPath
+Only for 'install'. Project root path. Skills are installed into '<RootPath>\.agents'.
+
+.PARAMETER DownloadMethod
+Optional download method. Valid values are auto, iwr, curl, bits, and webclient.
+
+.PARAMETER OverwriteAll
+Only for 'install'. Overwrite all existing skills and AGENTS.md without prompting.
+
+.PARAMETER SkipExisting
+Only for 'install'. Skip all existing skills and AGENTS.md without prompting.
+
+.PARAMETER Help
+Show help text.
+
+.EXAMPLE
+./install-skills.ps1 install -Region python
+
+.EXAMPLE
+./install-skills.ps1 install -Region python -Include pandas-dataframe,repo-workflow
+
+.EXAMPLE
+./install-skills.ps1 list -Region python
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [ValidateSet("install", "list")]
+    [string]$Command,
+
+    [Parameter()]
+    [ArgumentCompleter({
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            $scriptPath = $null
+            try {
+                $scriptReference = $null
+                if ($null -ne $commandAst -and $commandAst.CommandElements.Count -gt 0) {
+                    $scriptReference = $commandAst.CommandElements[0].Extent.Text
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($scriptReference)) {
+                    $scriptPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($scriptReference)
+                }
+            }
+            catch {
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                $commandInfo = Get-Command -Name $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -ne $commandInfo) {
+                    $scriptPath = $commandInfo.Path
+                }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                return
+            }
+
+            $scriptRoot = Split-Path -Parent $scriptPath
+            Get-ChildItem -LiteralPath $scriptRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                (Test-Path -LiteralPath (Join-Path $_.FullName ".agents\skills") -PathType Container) -and
+                (Test-Path -LiteralPath (Join-Path $_.FullName "AGENTS.md") -PathType Leaf)
+            } |
+            Sort-Object -Property Name |
+            Where-Object { $_.Name -like "$wordToComplete*" } |
+            ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_.Name, $_.Name, "ParameterValue", $_.Name)
+            }
+        })]
+    [string]$Region,
+
+    [Parameter()]
+    [ArgumentCompleter({
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            if (-not $fakeBoundParameters.ContainsKey("Region")) {
+                return
+            }
+
+            $region = [string]$fakeBoundParameters["Region"]
+            if ([string]::IsNullOrWhiteSpace($region)) {
+                return
+            }
+
+            $scriptPath = $null
+            try {
+                $scriptReference = $null
+                if ($null -ne $commandAst -and $commandAst.CommandElements.Count -gt 0) {
+                    $scriptReference = $commandAst.CommandElements[0].Extent.Text
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($scriptReference)) {
+                    $scriptPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($scriptReference)
+                }
+            }
+            catch {
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                $commandInfo = Get-Command -Name $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -ne $commandInfo) {
+                    $scriptPath = $commandInfo.Path
+                }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                return
+            }
+
+            $scriptRoot = Split-Path -Parent $scriptPath
+            $skillsRoot = Join-Path (Join-Path (Join-Path $scriptRoot $region) ".agents") "skills"
+            if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container)) {
+                return
+            }
+
+            $replacementPrefix = ""
+            $fragment = $wordToComplete
+            if ($wordToComplete -match "^(.*?,)([^,]*)$") {
+                $replacementPrefix = $Matches[1]
+                $fragment = $Matches[2]
+            }
+
+            $alreadySelected = @()
+            if (-not [string]::IsNullOrWhiteSpace($replacementPrefix)) {
+                $alreadySelected = @(
+                    $replacementPrefix.TrimEnd(",") -split "," |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ -ne "" }
+                )
+            }
+
+            Get-ChildItem -LiteralPath $skillsRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf
+            } |
+            Sort-Object -Property Name |
+            Where-Object {
+                $_.Name -like "$fragment*" -and $_.Name -notin $alreadySelected
+            } |
+            ForEach-Object {
+                $completionText = "$replacementPrefix$($_.Name)"
+                [System.Management.Automation.CompletionResult]::new($completionText, $_.Name, "ParameterValue", $_.Name)
+            }
+        })]
+    [string[]]$Include,
+
+    [Parameter()]
+    [ArgumentCompleter({
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            if (-not $fakeBoundParameters.ContainsKey("Region")) {
+                return
+            }
+
+            $region = [string]$fakeBoundParameters["Region"]
+            if ([string]::IsNullOrWhiteSpace($region)) {
+                return
+            }
+
+            $scriptPath = $null
+            try {
+                $scriptReference = $null
+                if ($null -ne $commandAst -and $commandAst.CommandElements.Count -gt 0) {
+                    $scriptReference = $commandAst.CommandElements[0].Extent.Text
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($scriptReference)) {
+                    $scriptPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($scriptReference)
+                }
+            }
+            catch {
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                $commandInfo = Get-Command -Name $commandName -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -ne $commandInfo) {
+                    $scriptPath = $commandInfo.Path
+                }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+                return
+            }
+
+            $scriptRoot = Split-Path -Parent $scriptPath
+            $skillsRoot = Join-Path (Join-Path (Join-Path $scriptRoot $region) ".agents") "skills"
+            if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container)) {
+                return
+            }
+
+            $replacementPrefix = ""
+            $fragment = $wordToComplete
+            if ($wordToComplete -match "^(.*?,)([^,]*)$") {
+                $replacementPrefix = $Matches[1]
+                $fragment = $Matches[2]
+            }
+
+            $alreadySelected = @()
+            if (-not [string]::IsNullOrWhiteSpace($replacementPrefix)) {
+                $alreadySelected = @(
+                    $replacementPrefix.TrimEnd(",") -split "," |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ -ne "" }
+                )
+            }
+
+            Get-ChildItem -LiteralPath $skillsRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf
+            } |
+            Sort-Object -Property Name |
+            Where-Object {
+                $_.Name -like "$fragment*" -and $_.Name -notin $alreadySelected
+            } |
+            ForEach-Object {
+                $completionText = "$replacementPrefix$($_.Name)"
+                [System.Management.Automation.CompletionResult]::new($completionText, $_.Name, "ParameterValue", $_.Name)
+            }
+        })]
+    [string[]]$Exclude,
+
+    [Parameter()]
+    [string]$RootPath,
+
+    [Parameter()]
+    [ValidateSet("auto", "iwr", "curl", "bits", "webclient")]
+    [string]$DownloadMethod = "auto",
+
+    [Parameter()]
+    [switch]$OverwriteAll,
+
+    [Parameter()]
+    [switch]$SkipExisting,
+
+    [Parameter()]
+    [Alias("h")]
+    [switch]$Help,
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -13,246 +285,177 @@ $script:AlwaysConfirmBeforeInstall = $true
 function Get-UsageText {
     return @"
 Usage:
-  ./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--root-path <path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
-  ./install-skills.ps1 list --region <name> [--download-method <auto|iwr|curl|bits|webclient>]
-  ./install-skills.ps1 --help
+  ./install-skills.ps1 install -Region <name> [-Include <skill1,skill2>] [-Exclude <skill1,skill2>] [-RootPath <path>] [-DownloadMethod <auto|iwr|curl|bits|webclient>] [-OverwriteAll] [-SkipExisting]
+  ./install-skills.ps1 list -Region <name> [-DownloadMethod <auto|iwr|curl|bits|webclient>]
+  ./install-skills.ps1 -Help
 
 Subcommands:
-  install            Download a region from the repository and install its skills
-  list               Download a region from the repository and print its available skill names
+  install           Download a region from the repository and install its skills
+  list              Download a region from the repository and print its available skill names
+
+PowerShell parameters:
+  -Region           Required. Install or list a single region, for example: python
+  -Include          Optional, install only. Use PowerShell array syntax, for example: -Include skill1,skill2
+  -Exclude          Optional, install only. Exclude skill names after include filtering
+  -RootPath         Optional, install only. Project root path; installs into its .agents folder
+  -DownloadMethod   Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
+  -OverwriteAll     Optional, install only. Overwrite all existing skills and AGENTS.md without prompting
+  -SkipExisting     Optional, install only. Skip all existing skills and AGENTS.md without prompting
+  -Help             Show this help text
 
 Compatibility:
-  - The legacy option-only syntax is no longer supported. Use 'install' or 'list' explicitly
-
-Install options:
-  --region           Required. Install skills from a single region, for example: python
-  --include          Optional. Comma-separated skill names to include. If omitted, install all skills in the region
-  --exclude          Optional. Comma-separated skill names to exclude after include filtering
-  --root-path        Optional. Project root path. Default: script directory; installs into its .agents folder
-  --download-method  Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
-  --overwrite-all    Optional. Overwrite all existing skills and AGENTS.md without prompting
-  --skip-existing    Optional. Skip all existing skills and AGENTS.md without prompting
-  --help             Show this help text
-
-List options:
-  --region           Required. List skills from a single region, for example: python
-  --download-method  Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
-  --help             Show this help text
+  - Legacy GNU-style options such as --region and --download-method are no longer supported
+  - Use PowerShell syntax instead, for example: ./install-skills.ps1 install -Region python
 
 Defaults:
-  - If --root-path is omitted, the project root defaults to the script directory and files are installed into its .agents folder
-  - Existing skills and AGENTS.md use per-item interactive confirmation unless --overwrite-all or --skip-existing is passed
+  - If -RootPath is omitted, the project root defaults to the script directory and files are installed into its .agents folder
+  - Existing skills and AGENTS.md use per-item interactive confirmation unless -OverwriteAll or -SkipExisting is passed
   - In interactive conflict prompts, pressing Enter defaults to Skip
   - The script always shows the execution plan and asks for confirmation before writing files
   - In the final confirmation prompt, pressing Enter defaults to Yes
 "@
 }
 
-function Split-NameList {
+function Get-UniqueStringValues {
     param(
         [AllowNull()]
-        [string]$Value
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        return @()
-    }
-
-    return @(
-        $Value -split "," |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ -ne "" }
-    )
-}
-
-function Add-UniqueString {
-    param(
-        [System.Collections.Generic.List[string]]$List,
         [string[]]$Values
     )
 
-    foreach ($value in $Values) {
-        if (-not $List.Contains($value)) {
-            $null = $List.Add($value)
+    $result = [System.Collections.Generic.List[string]]::new()
+    foreach ($value in @($Values)) {
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        $trimmed = $value.Trim()
+        if (-not $result.Contains($trimmed)) {
+            $null = $result.Add($trimmed)
         }
     }
+
+    return $result.ToArray()
 }
 
-function Parse-Arguments {
+function Get-ResolvedConflictMode {
     param(
-        [string[]]$Tokens
+        [bool]$UseOverwriteAll,
+        [bool]$UseSkipExisting
     )
 
-    if ($Tokens.Count -eq 0) {
+    if ($UseOverwriteAll) {
+        return "overwrite-all"
+    }
+
+    if ($UseSkipExisting) {
+        return "skip-existing"
+    }
+
+    return $script:DefaultConflictMode
+}
+
+function Get-ValidatedConfiguration {
+    param(
+        [AllowNull()]
+        [string]$CommandValue,
+        [AllowNull()]
+        [string]$RegionValue,
+        [AllowNull()]
+        [string[]]$IncludeValues,
+        [AllowNull()]
+        [string[]]$ExcludeValues,
+        [AllowNull()]
+        [string]$RootPathValue,
+        [bool]$RootPathWasSpecified,
+        [string]$DownloadMethodValue,
+        [bool]$UseOverwriteAll,
+        [bool]$UseSkipExisting,
+        [bool]$ShowHelp,
+        [AllowNull()]
+        [string[]]$ExtraArguments
+    )
+
+    $remaining = @($ExtraArguments | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($remaining.Count -gt 0) {
+        $legacyOptions = @($remaining | Where-Object { $_ -like "--*" })
+        if ($legacyOptions.Count -gt 0) {
+            $example = "./install-skills.ps1 install -Region python"
+            throw "Unsupported legacy GNU-style option(s): $($legacyOptions -join ', '). Use PowerShell parameter syntax instead, for example: $example`n`n$(Get-UsageText)"
+        }
+
+        throw "Unknown argument(s): $($remaining -join ' ').`n`n$(Get-UsageText)"
+    }
+
+    if ($ShowHelp) {
+        return [pscustomobject]@{
+            ShowHelp       = $true
+            Command        = $CommandValue
+            Region         = $null
+            Include        = @()
+            Exclude        = @()
+            RootPath       = $script:DefaultRootPath
+            DownloadMethod = $DownloadMethodValue.ToLowerInvariant()
+            ConflictMode   = $script:DefaultConflictMode
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($CommandValue)) {
         throw "A subcommand is required. Expected 'install' or 'list'.`n`n$(Get-UsageText)"
     }
 
-    $include = [System.Collections.Generic.List[string]]::new()
-    $exclude = [System.Collections.Generic.List[string]]::new()
-    $command = $null
-    $region = $null
-    $rootPath = $script:DefaultRootPath
-    $downloadMethod = $script:DefaultDownloadMethod
-    $overwriteAll = $false
-    $skipExisting = $false
-    $showHelp = $false
-    $supportedOptions = @()
+    $normalizedCommand = $CommandValue.Trim().ToLowerInvariant()
+    $normalizedRegion = $null
+    if (-not [string]::IsNullOrWhiteSpace($RegionValue)) {
+        $normalizedRegion = $RegionValue.Trim()
+    }
 
-    $firstToken = $Tokens[0]
-    if ($firstToken -eq "--help" -or $firstToken -eq "-h") {
-        return [pscustomobject]@{
-            ShowHelp       = $true
-            Command        = $null
-            Region         = $null
-            Include        = @()
-            Exclude        = @()
-            RootPath       = $rootPath
-            DownloadMethod = $downloadMethod
-            ConflictMode   = $script:DefaultConflictMode
+    if ([string]::IsNullOrWhiteSpace($normalizedRegion)) {
+        throw "-Region is required for '$normalizedCommand'.`n`n$(Get-UsageText)"
+    }
+
+    $normalizedRootPath = $script:DefaultRootPath
+    if (-not [string]::IsNullOrWhiteSpace($RootPathValue)) {
+        $normalizedRootPath = $RootPathValue.Trim()
+        if ($normalizedRootPath -eq "") {
+            throw "-RootPath cannot be empty.`n`n$(Get-UsageText)"
         }
     }
 
-    if ($firstToken.StartsWith("--")) {
-        throw "A subcommand is required before options. Expected 'install' or 'list'.`n`n$(Get-UsageText)"
+    if ($UseOverwriteAll -and $UseSkipExisting) {
+        throw "-OverwriteAll and -SkipExisting cannot be used together.`n`n$(Get-UsageText)"
     }
 
-    switch ($firstToken.ToLowerInvariant()) {
-        "install" {
-            $command = "install"
-            $supportedOptions = @("--region", "--include", "--exclude", "--root-path", "--download-method")
-        }
-        "list" {
-            $command = "list"
-            $supportedOptions = @("--region", "--download-method")
-        }
-        default {
-            throw "Unknown subcommand: $firstToken`n`n$(Get-UsageText)"
-        }
-    }
-
-    for ($index = 1; $index -lt $Tokens.Count; $index++) {
-        $token = $Tokens[$index]
-
-        if ($token -eq "--help" -or $token -eq "-h") {
-            $showHelp = $true
-            continue
+    if ($normalizedCommand -eq "list") {
+        if ($IncludeValues.Count -gt 0) {
+            throw "Parameter -Include is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
-        if ($token -eq "--overwrite-all") {
-            if ($command -ne "install") {
-                throw "Option --overwrite-all is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
-            }
-
-            $overwriteAll = $true
-            continue
+        if ($ExcludeValues.Count -gt 0) {
+            throw "Parameter -Exclude is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
-        if ($token -eq "--skip-existing") {
-            if ($command -ne "install") {
-                throw "Option --skip-existing is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
-            }
-
-            $skipExisting = $true
-            continue
+        if ($RootPathWasSpecified) {
+            throw "Parameter -RootPath is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
-        $optionName = $null
-        $optionValue = $null
-
-        if ($token -match "^(--[a-z-]+)=(.+)$") {
-            $optionName = $Matches[1]
-            $optionValue = $Matches[2]
-        }
-        else {
-            $optionName = $token
-            if ($optionName -in $supportedOptions) {
-                if ($index + 1 -ge $Tokens.Count) {
-                    throw "Missing value for $optionName.`n`n$(Get-UsageText)"
-                }
-
-                $index++
-                $optionValue = $Tokens[$index]
-            }
+        if ($UseOverwriteAll) {
+            throw "Parameter -OverwriteAll is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
-        if ($optionName -notin $supportedOptions) {
-            if ($command -eq "list" -and $optionName -in @("--include", "--exclude", "--root-path")) {
-                throw "Option $optionName is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
-            }
-
-            throw "Unknown argument for '$command': $token`n`n$(Get-UsageText)"
+        if ($UseSkipExisting) {
+            throw "Parameter -SkipExisting is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
-
-        switch ($optionName) {
-            "--region" {
-                if (-not [string]::IsNullOrWhiteSpace($region)) {
-                    throw "Only one --region value is supported.`n`n$(Get-UsageText)"
-                }
-
-                $region = $optionValue.Trim()
-                if ($region -eq "") {
-                    throw "--region cannot be empty.`n`n$(Get-UsageText)"
-                }
-            }
-            "--include" {
-                Add-UniqueString -List $include -Values (Split-NameList -Value $optionValue)
-            }
-            "--exclude" {
-                Add-UniqueString -List $exclude -Values (Split-NameList -Value $optionValue)
-            }
-            "--root-path" {
-                $rootPath = $optionValue.Trim()
-                if ($rootPath -eq "") {
-                    throw "--root-path cannot be empty.`n`n$(Get-UsageText)"
-                }
-            }
-            "--download-method" {
-                $downloadMethod = $optionValue.Trim().ToLowerInvariant()
-                if ($downloadMethod -notin @("auto", "iwr", "curl", "bits", "webclient")) {
-                    throw "Unsupported --download-method '$optionValue'. Expected one of: auto, iwr, curl, bits, webclient.`n`n$(Get-UsageText)"
-                }
-            }
-        }
-    }
-
-    if ($showHelp) {
-        return [pscustomobject]@{
-            ShowHelp       = $true
-            Command        = $command
-            Region         = $null
-            Include        = @()
-            Exclude        = @()
-            RootPath       = $rootPath
-            DownloadMethod = $downloadMethod
-            ConflictMode   = $script:DefaultConflictMode
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($region)) {
-        throw "--region is required for '$command'.`n`n$(Get-UsageText)"
-    }
-
-    if ($overwriteAll -and $skipExisting) {
-        throw "--overwrite-all and --skip-existing cannot be used together.`n`n$(Get-UsageText)"
-    }
-
-    $conflictMode = $script:DefaultConflictMode
-    if ($overwriteAll) {
-        $conflictMode = "overwrite-all"
-    }
-    elseif ($skipExisting) {
-        $conflictMode = "skip-existing"
     }
 
     return [pscustomobject]@{
         ShowHelp       = $false
-        Command        = $command
-        Region         = $region
-        Include        = $include.ToArray()
-        Exclude        = $exclude.ToArray()
-        RootPath       = $rootPath
-        DownloadMethod = $downloadMethod
-        ConflictMode   = $conflictMode
+        Command        = $normalizedCommand
+        Region         = $normalizedRegion
+        Include        = Get-UniqueStringValues -Values $IncludeValues
+        Exclude        = Get-UniqueStringValues -Values $ExcludeValues
+        RootPath       = $normalizedRootPath
+        DownloadMethod = $DownloadMethodValue.Trim().ToLowerInvariant()
+        ConflictMode   = Get-ResolvedConflictMode -UseOverwriteAll $UseOverwriteAll -UseSkipExisting $UseSkipExisting
     }
 }
 
@@ -432,7 +635,7 @@ function New-DownloadFailureMessage {
         $null = $lines.Add("  - A proxy or HTTPS interception certificate is rewriting the connection.")
         $null = $lines.Add("  - The local trust store does not trust the certificate chain.")
         $null = $lines.Add("Troubleshooting tips:")
-        $null = $lines.Add("  - Try '--download-method curl' if curl.exe works on this machine.")
+        $null = $lines.Add("  - Try '-DownloadMethod curl' if curl.exe works on this machine.")
         $null = $lines.Add("  - Compare the result in Windows PowerShell 5.1 versus PowerShell 7+.")
         $null = $lines.Add("  - Test the URL manually: curl.exe -L $Url -o test.zip")
         $null = $lines.Add("  - If you are on a corporate network, verify proxy and certificate requirements.")
@@ -624,11 +827,11 @@ function Resolve-SelectedSkills {
     $unknownExclude = @($Exclude | Where-Object { $_ -notin $availableNames })
 
     if ($unknownInclude.Count -gt 0) {
-        throw "Unknown skill name(s) in --include: $($unknownInclude -join ', '). Available skills: $($availableNames -join ', ')"
+        throw "Unknown skill name(s) in -Include: $($unknownInclude -join ', '). Available skills: $($availableNames -join ', ')"
     }
 
     if ($unknownExclude.Count -gt 0) {
-        throw "Unknown skill name(s) in --exclude: $($unknownExclude -join ', '). Available skills: $($availableNames -join ', ')"
+        throw "Unknown skill name(s) in -Exclude: $($unknownExclude -join ', '). Available skills: $($availableNames -join ', ')"
     }
 
     if ($Include.Count -gt 0) {
@@ -643,7 +846,7 @@ function Resolve-SelectedSkills {
     }
 
     if ($selected.Count -eq 0) {
-        throw "No skills remain after applying --include/--exclude."
+        throw "No skills remain after applying -Include/-Exclude."
     }
 
     $notes = [System.Collections.Generic.List[string]]::new()
@@ -1005,7 +1208,19 @@ function Remove-WorkspaceSafely {
 $workspaceRoot = $null
 
 try {
-    $config = Parse-Arguments -Tokens $args
+    $config = Get-ValidatedConfiguration `
+        -CommandValue $Command `
+        -RegionValue $Region `
+        -IncludeValues $Include `
+        -ExcludeValues $Exclude `
+        -RootPathValue $RootPath `
+        -RootPathWasSpecified ($PSBoundParameters.ContainsKey("RootPath")) `
+        -DownloadMethodValue $DownloadMethod `
+        -UseOverwriteAll ($OverwriteAll.IsPresent) `
+        -UseSkipExisting ($SkipExisting.IsPresent) `
+        -ShowHelp ($Help.IsPresent) `
+        -ExtraArguments $RemainingArgs
+
     if ($config.ShowHelp) {
         Write-Host (Get-UsageText)
         exit 0
