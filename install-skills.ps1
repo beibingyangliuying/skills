@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $script:RepositoryUrl = "https://github.com/beibingyangliuying/skills"
 $script:ArchiveUrl = "https://github.com/beibingyangliuying/skills/archive/refs/heads/main.zip"
-$script:DefaultAgent = "codex"
+$script:DefaultRootPath = $PSScriptRoot
 $script:DefaultDownloadMethod = "auto"
 $script:DefaultConflictMode = "interactive"
 $script:AlwaysConfirmBeforeInstall = $true
@@ -13,7 +13,7 @@ $script:AlwaysConfirmBeforeInstall = $true
 function Get-UsageText {
     return @"
 Usage:
-  ./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
+  ./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--root-path <path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
   ./install-skills.ps1 list --region <name> [--download-method <auto|iwr|curl|bits|webclient>]
   ./install-skills.ps1 --help
 
@@ -28,7 +28,7 @@ Install options:
   --region           Required. Install skills from a single region, for example: python
   --include          Optional. Comma-separated skill names to include. If omitted, install all skills in the region
   --exclude          Optional. Comma-separated skill names to exclude after include filtering
-  --agent            Optional. $($script:DefaultAgent) (default), claude, or a custom agent root path
+  --root-path        Optional. Project root path. Default: script directory; installs into its .agents folder
   --download-method  Optional. $($script:DefaultDownloadMethod) (default), iwr, curl, bits, or webclient
   --overwrite-all    Optional. Overwrite all existing skills and AGENTS.md without prompting
   --skip-existing    Optional. Skip all existing skills and AGENTS.md without prompting
@@ -40,6 +40,7 @@ List options:
   --help             Show this help text
 
 Defaults:
+  - If --root-path is omitted, the project root defaults to the script directory and files are installed into its .agents folder
   - Existing skills and AGENTS.md use per-item interactive confirmation unless --overwrite-all or --skip-existing is passed
   - In interactive conflict prompts, pressing Enter defaults to Skip
   - The script always shows the execution plan and asks for confirmation before writing files
@@ -90,7 +91,7 @@ function Parse-Arguments {
     $exclude = [System.Collections.Generic.List[string]]::new()
     $command = $null
     $region = $null
-    $agent = $script:DefaultAgent
+    $rootPath = $script:DefaultRootPath
     $downloadMethod = $script:DefaultDownloadMethod
     $overwriteAll = $false
     $skipExisting = $false
@@ -105,7 +106,7 @@ function Parse-Arguments {
             Region         = $null
             Include        = @()
             Exclude        = @()
-            Agent          = $agent
+            RootPath       = $rootPath
             DownloadMethod = $downloadMethod
             ConflictMode   = $script:DefaultConflictMode
         }
@@ -118,7 +119,7 @@ function Parse-Arguments {
     switch ($firstToken.ToLowerInvariant()) {
         "install" {
             $command = "install"
-            $supportedOptions = @("--region", "--include", "--exclude", "--agent", "--download-method")
+            $supportedOptions = @("--region", "--include", "--exclude", "--root-path", "--download-method")
         }
         "list" {
             $command = "list"
@@ -175,7 +176,7 @@ function Parse-Arguments {
         }
 
         if ($optionName -notin $supportedOptions) {
-            if ($command -eq "list" -and $optionName -in @("--include", "--exclude", "--agent")) {
+            if ($command -eq "list" -and $optionName -in @("--include", "--exclude", "--root-path")) {
                 throw "Option $optionName is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
             }
 
@@ -199,10 +200,10 @@ function Parse-Arguments {
             "--exclude" {
                 Add-UniqueString -List $exclude -Values (Split-NameList -Value $optionValue)
             }
-            "--agent" {
-                $agent = $optionValue.Trim()
-                if ($agent -eq "") {
-                    throw "--agent cannot be empty.`n`n$(Get-UsageText)"
+            "--root-path" {
+                $rootPath = $optionValue.Trim()
+                if ($rootPath -eq "") {
+                    throw "--root-path cannot be empty.`n`n$(Get-UsageText)"
                 }
             }
             "--download-method" {
@@ -221,7 +222,7 @@ function Parse-Arguments {
             Region         = $null
             Include        = @()
             Exclude        = @()
-            Agent          = $agent
+            RootPath       = $rootPath
             DownloadMethod = $downloadMethod
             ConflictMode   = $script:DefaultConflictMode
         }
@@ -249,7 +250,7 @@ function Parse-Arguments {
         Region         = $region
         Include        = $include.ToArray()
         Exclude        = $exclude.ToArray()
-        Agent          = $agent
+        RootPath       = $rootPath
         DownloadMethod = $downloadMethod
         ConflictMode   = $conflictMode
     }
@@ -480,24 +481,28 @@ function Download-Archive {
     throw (New-DownloadFailureMessage -Url $Url -RequestedMethod $RequestedMethod -Attempts $attempts.ToArray())
 }
 
-function Resolve-AgentRoot {
+function Resolve-ProjectRoot {
     param(
-        [string]$AgentValue
+        [AllowNull()]
+        [string]$RootPathValue
     )
 
-    switch ($AgentValue.ToLowerInvariant()) {
-        "codex" {
-            return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".codex"))
-        }
-        "claude" {
-            return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".claude"))
-        }
-        default {
-            return [System.IO.Path]::GetFullPath(
-                $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($AgentValue)
-            )
-        }
+    $projectRoot = $RootPathValue
+    if ([string]::IsNullOrWhiteSpace($projectRoot)) {
+        $projectRoot = $script:DefaultRootPath
     }
+
+    return [System.IO.Path]::GetFullPath(
+        $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($projectRoot)
+    )
+}
+
+function Resolve-AgentsRoot {
+    param(
+        [string]$ProjectRoot
+    )
+
+    return [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot ".agents"))
 }
 
 function New-TemporaryWorkspace {
@@ -656,11 +661,11 @@ function Resolve-SelectedSkills {
 function Get-Conflicts {
     param(
         [object[]]$Skills,
-        [string]$AgentRoot
+        [string]$AgentsRoot
     )
 
     $conflicts = [System.Collections.Generic.List[object]]::new()
-    $skillsTargetRoot = Join-Path $AgentRoot "skills"
+    $skillsTargetRoot = Join-Path $AgentsRoot "skills"
 
     foreach ($skill in $Skills) {
         $destination = Join-Path $skillsTargetRoot $skill.Name
@@ -673,7 +678,7 @@ function Get-Conflicts {
         }
     }
 
-    $agentsTarget = Join-Path $AgentRoot "AGENTS.md"
+    $agentsTarget = Join-Path $AgentsRoot "AGENTS.md"
     if (Test-Path -LiteralPath $agentsTarget -PathType Leaf) {
         $null = $conflicts.Add([pscustomobject]@{
                 Type = "AGENTS"
@@ -688,15 +693,16 @@ function Get-Conflicts {
 function Show-ExecutionPlan {
     param(
         [pscustomobject]$Config,
-        [string]$AgentRoot,
+        [string]$ProjectRoot,
+        [string]$AgentsRoot,
         [object[]]$Skills,
         [object[]]$Conflicts,
         [string[]]$Notes,
         [string]$ResolvedDownloadMethod
     )
 
-    $skillsTargetRoot = Join-Path $AgentRoot "skills"
-    $agentsTarget = Join-Path $AgentRoot "AGENTS.md"
+    $skillsTargetRoot = Join-Path $AgentsRoot "skills"
+    $agentsTarget = Join-Path $AgentsRoot "AGENTS.md"
     $notesList = @($Notes)
     $conflictList = @($Conflicts)
 
@@ -708,7 +714,8 @@ function Show-ExecutionPlan {
     Write-Host "Download    : requested=$($Config.DownloadMethod), used=$ResolvedDownloadMethod"
     Write-Host "Conflicts   : $($Config.ConflictMode)"
     Write-Host "Region      : $($Config.Region)"
-    Write-Host "Agent root  : $AgentRoot"
+    Write-Host "Project root: $ProjectRoot"
+    Write-Host "Agents root : $AgentsRoot"
     Write-Host "Skills dir  : $skillsTargetRoot"
     Write-Host "AGENTS.md   : $agentsTarget"
     Write-Host ""
@@ -897,7 +904,8 @@ function Install-AgentsFile {
 function Write-ExecutionSummary {
     param(
         [pscustomobject]$Result,
-        [string]$AgentRoot,
+        [string]$ProjectRoot,
+        [string]$AgentsRoot,
         [string]$DownloadMethodUsed,
         [string]$ConflictMode
     )
@@ -905,11 +913,12 @@ function Write-ExecutionSummary {
     Write-Host ""
     Write-Host "Execution summary"
     Write-Host "================="
-    Write-Host "Agent root : $AgentRoot"
+    Write-Host "Project root: $ProjectRoot"
+    Write-Host "Agents root : $AgentsRoot"
     Write-Host "Download   : $DownloadMethodUsed"
     Write-Host "Conflicts  : $ConflictMode"
-    Write-Host "Skills dir : $(Join-Path $AgentRoot 'skills')"
-    Write-Host "AGENTS.md  : $(Join-Path $AgentRoot 'AGENTS.md')"
+    Write-Host "Skills dir : $(Join-Path $AgentsRoot 'skills')"
+    Write-Host "AGENTS.md  : $(Join-Path $AgentsRoot 'AGENTS.md')"
     Write-Host ""
 
     Write-Host "Installed skills:"
@@ -964,21 +973,21 @@ function Invoke-Installation {
     param(
         [object[]]$Skills,
         [string]$AgentsSourcePath,
-        [string]$AgentRoot,
+        [string]$AgentsRoot,
         [string]$ConflictMode
     )
 
     $result = New-ExecutionResult
-    $skillsTargetRoot = Join-Path $AgentRoot "skills"
+    $skillsTargetRoot = Join-Path $AgentsRoot "skills"
 
-    $null = New-Item -ItemType Directory -Path $AgentRoot -Force
+    $null = New-Item -ItemType Directory -Path $AgentsRoot -Force
     $null = New-Item -ItemType Directory -Path $skillsTargetRoot -Force
 
     foreach ($skill in $Skills) {
         Install-Skill -Skill $skill -SkillsTargetRoot $skillsTargetRoot -Result $result -ConflictMode $ConflictMode
     }
 
-    Install-AgentsFile -SourcePath $AgentsSourcePath -TargetPath (Join-Path $AgentRoot "AGENTS.md") -Result $result -ConflictMode $ConflictMode
+    Install-AgentsFile -SourcePath $AgentsSourcePath -TargetPath (Join-Path $AgentsRoot "AGENTS.md") -Result $result -ConflictMode $ConflictMode
     return $result
 }
 
@@ -1013,11 +1022,12 @@ try {
         exit 0
     }
 
-    $agentRoot = Resolve-AgentRoot -AgentValue $config.Agent
+    $projectRoot = Resolve-ProjectRoot -RootPathValue $config.RootPath
+    $agentsRoot = Resolve-AgentsRoot -ProjectRoot $projectRoot
     $selection = Resolve-SelectedSkills -AvailableSkills $availableSkills -Include $config.Include -Exclude $config.Exclude
-    $conflicts = Get-Conflicts -Skills $selection.Skills -AgentRoot $agentRoot
+    $conflicts = Get-Conflicts -Skills $selection.Skills -AgentsRoot $agentsRoot
 
-    Show-ExecutionPlan -Config $config -AgentRoot $agentRoot -Skills $selection.Skills -Conflicts $conflicts -Notes $selection.Notes -ResolvedDownloadMethod $archive.DownloadMethod
+    Show-ExecutionPlan -Config $config -ProjectRoot $projectRoot -AgentsRoot $agentsRoot -Skills $selection.Skills -Conflicts $conflicts -Notes $selection.Notes -ResolvedDownloadMethod $archive.DownloadMethod
 
     if (-not (Confirm-Execution)) {
         Write-Host ""
@@ -1025,8 +1035,8 @@ try {
         exit 0
     }
 
-    $result = Invoke-Installation -Skills $selection.Skills -AgentsSourcePath $layout.AgentsPath -AgentRoot $agentRoot -ConflictMode $config.ConflictMode
-    Write-ExecutionSummary -Result $result -AgentRoot $agentRoot -DownloadMethodUsed $archive.DownloadMethod -ConflictMode $config.ConflictMode
+    $result = Invoke-Installation -Skills $selection.Skills -AgentsSourcePath $layout.AgentsPath -AgentsRoot $agentsRoot -ConflictMode $config.ConflictMode
+    Write-ExecutionSummary -Result $result -ProjectRoot $projectRoot -AgentsRoot $agentsRoot -DownloadMethodUsed $archive.DownloadMethod -ConflictMode $config.ConflictMode
 
     if ($result.FailedItems.Count -gt 0) {
         exit 1

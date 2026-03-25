@@ -6,26 +6,26 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 
 仓库根目录提供了 `install-skills.ps1`，用于从 GitHub 仓库远程下载某个 region 的 skills，并执行两类操作：
 
-- 安装到指定 agent 目录
+- 安装到指定项目根目录下的 `.agents` 目录
 - 列出该 region 下可用的 skill 名称
 
-当前脚本采用子命令形式，支持单个 region 的 `install` 和 `list` 操作；默认安装目标仍是脚本所在目录下的 `\.codex`。
+当前脚本采用子命令形式，支持单个 region 的 `install` 和 `list` 操作；默认安装目标是脚本所在目录下的 `\.agents`。
 
 ### 用法
 
 ```powershell
-./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--agent <codex|claude|path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
+./install-skills.ps1 install --region <name> [--include <skill1,skill2>] [--exclude <skill1,skill2>] [--root-path <path>] [--download-method <auto|iwr|curl|bits|webclient>] [--overwrite-all] [--skip-existing]
 ./install-skills.ps1 list --region <name> [--download-method <auto|iwr|curl|bits|webclient>]
 ```
 
 参数说明：
 
-- `install`：安装指定 region 下的 skills 到 agent 目录
+- `install`：安装指定 region 下的 skills 到项目根目录下的 `.agents` 目录
 - `list`：列出指定 region 下远端仓库中的可用 skill 名称
 - `--region`：必填。指定要处理的 region，例如 `python`
 - `--include`：仅 `install` 支持。只安装列出的 skill，多个名称用英文逗号分隔
 - `--exclude`：仅 `install` 支持。排除列出的 skill，多个名称用英文逗号分隔
-- `--agent`：仅 `install` 支持。默认是 `codex`；也支持 `claude` 或自定义目录路径
+- `--root-path`：仅 `install` 支持。表示项目根目录；实际会安装到该目录下的 `.agents`
 - `--download-method`：`install` 和 `list` 都支持。默认 `auto`；用于排障时强制指定下载器，可选 `iwr`、`curl`、`bits`、`webclient`
 - `--overwrite-all`：仅 `install` 支持。目标已存在时全部直接覆盖，不再逐项询问
 - `--skip-existing`：仅 `install` 支持。目标已存在时全部直接跳过，不再逐项询问
@@ -40,17 +40,16 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 
 ### 目录规则
 
-- `--agent codex` 安装到 `<scriptRoot>\.codex`
-- `--agent claude` 安装到 `<scriptRoot>\.claude`
-- 其他 `--agent` 值会被当作自定义 agent 根目录
-- skills 会安装到 `<agentRoot>\skills\<skillName>`
-- `AGENTS.md` 会安装到 `<agentRoot>\AGENTS.md`
+- 如果不传 `--root-path`，项目根目录默认是 `<scriptRoot>`
+- 如果传入 `--root-path <path>`，则项目根目录是 `<path>`
+- skills 会安装到 `<projectRoot>\.agents\skills\<skillName>`
+- `AGENTS.md` 会安装到 `<projectRoot>\.agents\AGENTS.md`
 
 这里的 `<scriptRoot>` 指的是 `install-skills.ps1` 文件本身所在的目录，不是当前终端所在目录。
 
 ### 示例
 
-安装 `python` region 下的全部 skills 到默认的 codex 目录：
+安装 `python` region 下的全部 skills 到默认的 `.agents` 目录：
 
 ```powershell
 ./install-skills.ps1 install --region python
@@ -68,16 +67,10 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 ./install-skills.ps1 install --region python --exclude local-wheel-reuse
 ```
 
-安装到 claude 目录：
+安装到自定义项目根目录：
 
 ```powershell
-./install-skills.ps1 install --region python --agent claude
-```
-
-安装到自定义目录：
-
-```powershell
-./install-skills.ps1 install --region python --agent C:\temp\my-agent
+./install-skills.ps1 install --region python --root-path C:\work\demo
 ```
 
 目标已存在时全部覆盖：
@@ -118,7 +111,8 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 - 下载方式
 - 冲突处理模式
 - region 名称
-- 目标 agent 根目录
+- 项目根目录
+- 目标 `.agents` 根目录
 - 即将安装的 skill 列表
 - 将写入的 `AGENTS.md`
 - 已发现的潜在冲突项
@@ -142,7 +136,7 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 
 在这些逐项冲突确认里，直接回车时默认选择 `Skip`。
 
-如果目标根目录已经存在 `AGENTS.md`，同样会提示覆盖还是跳过。
+如果目标 `.agents` 根目录已经存在 `AGENTS.md`，同样会提示覆盖还是跳过。
 
 如果传了 `--overwrite-all`，所有已存在项都会直接覆盖。
 
