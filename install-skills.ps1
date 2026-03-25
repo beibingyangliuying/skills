@@ -334,7 +334,7 @@ function Get-UniqueStringValues {
         }
     }
 
-    return $result.ToArray()
+    return , ($result.ToArray())
 }
 
 function Get-ResolvedConflictMode {
@@ -403,6 +403,17 @@ function Get-ValidatedConfiguration {
         throw "A subcommand is required. Expected 'install' or 'list'.`n`n$(Get-UsageText)"
     }
 
+    $normalizedIncludeValues = @(
+        @($IncludeValues) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
+    )
+    $normalizedExcludeValues = @(
+        @($ExcludeValues) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
+    )
+
     $normalizedCommand = $CommandValue.Trim().ToLowerInvariant()
     $normalizedRegion = $null
     if (-not [string]::IsNullOrWhiteSpace($RegionValue)) {
@@ -426,11 +437,11 @@ function Get-ValidatedConfiguration {
     }
 
     if ($normalizedCommand -eq "list") {
-        if ($IncludeValues.Count -gt 0) {
+        if ($normalizedIncludeValues.Count -gt 0) {
             throw "Parameter -Include is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
-        if ($ExcludeValues.Count -gt 0) {
+        if ($normalizedExcludeValues.Count -gt 0) {
             throw "Parameter -Exclude is only supported for the 'install' subcommand.`n`n$(Get-UsageText)"
         }
 
@@ -451,8 +462,8 @@ function Get-ValidatedConfiguration {
         ShowHelp       = $false
         Command        = $normalizedCommand
         Region         = $normalizedRegion
-        Include        = Get-UniqueStringValues -Values $IncludeValues
-        Exclude        = Get-UniqueStringValues -Values $ExcludeValues
+        Include        = Get-UniqueStringValues -Values $normalizedIncludeValues
+        Exclude        = Get-UniqueStringValues -Values $normalizedExcludeValues
         RootPath       = $normalizedRootPath
         DownloadMethod = $DownloadMethodValue.Trim().ToLowerInvariant()
         ConflictMode   = Get-ResolvedConflictMode -UseOverwriteAll $UseOverwriteAll -UseSkipExisting $UseSkipExisting
@@ -822,9 +833,20 @@ function Resolve-SelectedSkills {
         [string[]]$Exclude
     )
 
+    $includeList = @(
+        @($Include) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
+    )
+    $excludeList = @(
+        @($Exclude) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.Trim() }
+    )
+
     $availableNames = @($AvailableSkills.Name)
-    $unknownInclude = @($Include | Where-Object { $_ -notin $availableNames })
-    $unknownExclude = @($Exclude | Where-Object { $_ -notin $availableNames })
+    $unknownInclude = @($includeList | Where-Object { $_ -notin $availableNames })
+    $unknownExclude = @($excludeList | Where-Object { $_ -notin $availableNames })
 
     if ($unknownInclude.Count -gt 0) {
         throw "Unknown skill name(s) in -Include: $($unknownInclude -join ', '). Available skills: $($availableNames -join ', ')"
@@ -834,15 +856,15 @@ function Resolve-SelectedSkills {
         throw "Unknown skill name(s) in -Exclude: $($unknownExclude -join ', '). Available skills: $($availableNames -join ', ')"
     }
 
-    if ($Include.Count -gt 0) {
-        $selected = @($AvailableSkills | Where-Object { $_.Name -in $Include })
+    if ($includeList.Count -gt 0) {
+        $selected = @($AvailableSkills | Where-Object { $_.Name -in $includeList })
     }
     else {
         $selected = @($AvailableSkills)
     }
 
-    if ($Exclude.Count -gt 0) {
-        $selected = @($selected | Where-Object { $_.Name -notin $Exclude })
+    if ($excludeList.Count -gt 0) {
+        $selected = @($selected | Where-Object { $_.Name -notin $excludeList })
     }
 
     if ($selected.Count -eq 0) {
@@ -850,7 +872,7 @@ function Resolve-SelectedSkills {
     }
 
     $notes = [System.Collections.Generic.List[string]]::new()
-    $overlap = @($Include | Where-Object { $_ -in $Exclude })
+    $overlap = @($includeList | Where-Object { $_ -in $excludeList })
     if ($overlap.Count -gt 0) {
         $null = $notes.Add("Exclude takes precedence over include for: $($overlap -join ', ')")
     }
