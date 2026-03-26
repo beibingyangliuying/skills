@@ -74,7 +74,7 @@ GitHub项目网址：<https://github.com/beibingyangliuying/skills>
 安装除某个 skill 之外的全部内容：
 
 ```powershell
-./install-skills.ps1 install -Region python -Exclude local-wheel-reuse
+./install-skills.ps1 install -Region python -Exclude local-package-reuse
 ```
 
 安装到自定义项目根目录：
