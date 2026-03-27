@@ -1,0 +1,4 @@
+interface:
+  display_name: "Numerical Experiments"
+  short_description: "Plan, resume, and organize experiment runs"
+  default_prompt: "Use $numerical-experiments to design or resume a reusable experiment run with a clear execution plan and artifact layout."
