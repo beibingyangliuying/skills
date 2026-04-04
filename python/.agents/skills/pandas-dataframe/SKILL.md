@@ -1,6 +1,6 @@
 ---
 name: pandas-dataframe
-description: 当任务涉及本仓库中的 pandas DataFrame 或 Series 数据处理时使用，用于约束结构说明、转换可读性和结果稳定性，不用于绘图导出或一般性的仓库工作流问题。
+description: 当任务涉及本仓库中的 pandas DataFrame 或 Series 数据处理时使用，负责约束结构说明、转换可读性和结果稳定性，不用于绘图导出或一般性的仓库工作流问题。
 ---
 
 # Pandas DataFrame

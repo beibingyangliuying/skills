@@ -1,13 +1,13 @@
 ---
 name: local-package-upgrade-compatibility
-description: 当任务涉及将当前项目附近的本地 `.whl` / `.tar.gz` 升级到更高版本并完成受影响改造时使用，用于盘点兼容性边界和迁移动作，不用于一般性的本地包接入选择。
+description: 当任务涉及将当前项目附近的本地 `.whl` / `.tar.gz` 升级到更高版本时使用，负责盘点 breaking changes 与迁移动作，不用于一般性的本地包接入选择。
 ---
 
 # Local Package Upgrade Compatibility
 
 ## 核心目标
 
-在升级本地包到新版本时，系统识别受影响边界、实施必要的兼容性改造，并清楚说明影响与迁移方式。
+在升级本地包到新版本时，系统识别受影响边界、实施必要改造，并清楚说明影响与迁移方式。
 
 ## 边界说明
 
