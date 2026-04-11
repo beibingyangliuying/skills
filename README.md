@@ -197,3 +197,28 @@ $PSVersionTable
 ```
 
 1. 如果你在公司网络、代理或受管设备环境中，确认是否存在 HTTPS 代理、中间人证书或证书链信任要求。
+
+## quick_validate.ps1
+
+仓库根目录提供了 `quick_validate.ps1`，用于对任意 skill 目录执行轻量 frontmatter 校验。
+
+当前脚本会检查：
+
+- 目标目录中是否存在 `SKILL.md`
+- 是否包含合法的 YAML frontmatter
+- frontmatter 是否是顶层字典
+- 是否包含 `name` 和 `description`
+- 顶层字段是否只使用允许的属性名
+- `name` 与 `description` 是否满足长度和格式限制
+
+### 用法
+
+```powershell
+./quick_validate.ps1 <path-to-skill-folder>
+./quick_validate.ps1 -SkillPath <path-to-skill-folder>
+```
+
+### 返回值
+
+- 校验成功时输出 `Skill is valid!` 并返回退出码 `0`
+- 校验失败时输出首个错误原因并返回退出码 `1`
