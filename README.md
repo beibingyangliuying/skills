@@ -1,6 +1,6 @@
 # README
 
-GitHub项目网址：<https://github.com/beibingyangliuying/skills>
+GitHub项目网址：[https://github.com/beibingyangliuying/skills](https://github.com/beibingyangliuying/skills)
 
 ## install-skills.ps1
 
