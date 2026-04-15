@@ -14,6 +14,7 @@
 ## 字段规范
 
 - MUST: 每份 roadmap 默认至少包含 `Status`、`Scope`、`Last updated`。
+- MUST: 关闭态字段只使用 `Completed at`、`Superseded at`、`Next roadmap`、`Superseded by`、`Final note` 这一组命名，不并行保留别名字段。
 - MUST: `Superseded by` 仅在该 roadmap 已被新 roadmap 接管时填写。
 - MUST: `Next roadmap` 仅在已经明确存在后继路线时填写，不作为默认必填。
 - MUST: `Final note` 用于说明为什么结束、完成到什么程度、或为什么被替代。
@@ -40,12 +41,14 @@
   - `Superseded by`
   - `Final note`
 - MUST NOT: 不要用 `—` 之类的占位符伪装成字段存在。
+- MUST NOT: 不要为同一关闭语义并行保留旧别名或历史性替代表述。
 - MUST: 若关系尚不存在，就不要写该字段。
 - MUST: `Next roadmap` 与 `Superseded by` 表达的是两种不同关闭语义，不应作为对称默认字段同时预填。
 
 ## 时间戳规范
 
 - MUST: `Last updated`、`Completed at`、`Superseded at` 等字段都必须包含日期、时间和时区。
+- MUST: 若 `Progress update` 采用时间序列追加多条更新，单条更新也必须包含日期、时间和时区。
 - MUST: 默认使用 ISO 8601，例如 `2026-04-15T14:32:00+08:00`。
 - MUST NOT: 不得只写日期，例如 `2026-04-15`。
 - MUST NOT: 不得使用 `today`、`yesterday`、`just now` 这类相对时间。

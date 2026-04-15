@@ -4,6 +4,14 @@
 
 为单份 roadmap、全局 index 和 archive 收口提供一套轻量、稳定、易读的默认结构。
 
+## 快速目录
+
+- 推荐目录结构
+- Active / Draft Roadmap 模板
+- Completed / Superseded 收口补丁模板
+- Index 模板
+- Archive 收口模板
+
 ## 推荐目录结构
 
 当 roadmap 数量较多、状态混杂或关系变复杂时，优先采用类似结构：
@@ -54,7 +62,8 @@ Related roadmaps: plugin-runtime-roadmap.md
 按阶段或里程碑描述路线。
 
 ## Progress update
-记录执行后的新进展、部分完成项和判断变化。
+- 2026-04-15T14:32:00+08:00: 记录执行后的新进展、部分完成项和判断变化。
+- 2026-04-15T16:05:00+08:00: 若同一天内再次更新，也继续使用带日期、时间和时区的条目。
 
 ## Open questions
 还没定的关键问题。
@@ -95,7 +104,7 @@ Why it stopped: 原路线已被新方案替代。
 Completion level: 部分完成后切换路线。
 ```
 
-“继续推进原路线”不自动生成 successor 字段；只有确实形成后继路线时才写 `Next roadmap` 或 `Follow-up`。
+“继续推进原路线”不自动生成关闭态关系字段；只有确实形成后继路线时才写 `Next roadmap`。
 
 ## Index 模板
 
@@ -128,10 +137,30 @@ Last updated: 2026-04-15T14:32:00+08:00
 
 ## Archive 收口模板
 
+归档不引入额外的关闭态字段；只沿用 `completed` 或 `superseded` 已有的字段命名。
+
+### Completed archive 片段
+
 ```md
+Status: completed
+Last updated: 2026-04-15T18:05:00+08:00
+Completed at: 2026-04-15T18:05:00+08:00
+Next roadmap: payment-hardening-roadmap.md
+
 ## Final note
-Roadmap status closed at: 2026-04-15T18:05:00+08:00
-Why it stopped: <已完成 / 被替代 / 前提失效>
-Completion level: <主体完成 / 部分完成 / 探索结束未继续采用>
-Follow-up: <下一份 roadmap 或无>
+Why it stopped: 主体目标已完成。
+Completion level: 主体完成，剩余优化项转入后续路线。
+```
+
+### Superseded archive 片段
+
+```md
+Status: superseded
+Last updated: 2026-04-15T18:05:00+08:00
+Superseded at: 2026-04-15T18:05:00+08:00
+Superseded by: async-runtime-roadmap.md
+
+## Final note
+Why it stopped: 原路线已被新方案替代。
+Completion level: 部分完成后切换路线。
 ```
